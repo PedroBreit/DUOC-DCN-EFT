@@ -5,11 +5,16 @@ import com.duoc.bff.exception.ServicioNoDisponibleException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -81,6 +86,66 @@ public class PlataformaService {
         } catch (ResourceAccessException ex) {
             throw new ServicioNoDisponibleException(
                     "No fue posible conectar con inscripciones-service"
+            );
+        }
+    }
+
+    public Map<String, Object> subirArchivo(
+            Long idCurso,
+            MultipartFile archivo
+    ) {
+        try {
+            ByteArrayResource recurso = new ByteArrayResource(
+                    archivo.getBytes()
+            ) {
+                @Override
+                public String getFilename() {
+                    return archivo.getOriginalFilename();
+                }
+            };
+
+            MultiValueMap<String, Object> body =
+                    new LinkedMultiValueMap<>();
+
+            body.add("archivo", recurso);
+
+            return restClient.post()
+                    .uri(
+                            cursosUrl
+                                    + "/api/archivos/cursos/"
+                                    + idCurso
+                    )
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {
+                    });
+
+        } catch (IOException ex) {
+            throw new IllegalStateException(
+                    "No fue posible leer el archivo enviado",
+                    ex
+            );
+        } catch (ResourceAccessException ex) {
+            throw new ServicioNoDisponibleException(
+                    "No fue posible conectar con cursos-service"
+            );
+        }
+    }
+
+    public byte[] descargarArchivo(String key) {
+        try {
+            return restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .path(cursosUrl + "/api/archivos")
+                            .queryParam("key", key)
+                            .build())
+                    .retrieve()
+                    .body(byte[].class);
+
+        } catch (ResourceAccessException ex) {
+            throw new ServicioNoDisponibleException(
+                    "No fue posible conectar con cursos-service"
             );
         }
     }

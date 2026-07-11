@@ -1,9 +1,0 @@
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\controller\CursoController.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\CursosServiceApplication.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\dto\CursoRequest.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\dto\CursoResponse.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\exception\GlobalExceptionHandler.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\exception\RecursoNoEncontradoException.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\model\Curso.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\repository\CursoRepository.java
-C:\Users\pedro\OneDrive\Escritorio\Cloud ETF\plataforma-cursos-cloud\cursos-service\src\main\java\com\duoc\cursos\service\CursoService.java
