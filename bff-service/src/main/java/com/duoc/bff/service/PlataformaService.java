@@ -136,16 +136,15 @@ public class PlataformaService {
     public byte[] descargarArchivo(String key) {
         try {
             return restClient.get()
-                    .uri(uriBuilder -> uriBuilder
-                            .path(cursosUrl + "/api/archivos")
-                            .queryParam("key", key)
-                            .build())
-                    .retrieve()
-                    .body(byte[].class);
-
+                .uri(
+                    cursosUrl + "/api/archivos?key={key}",
+                    key
+                )
+                .retrieve()
+                .body(byte[].class);
         } catch (ResourceAccessException ex) {
             throw new ServicioNoDisponibleException(
-                    "No fue posible conectar con cursos-service"
+                "No fue posible conectar con cursos-service"
             );
         }
     }
