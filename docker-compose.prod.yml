@@ -1,0 +1,139 @@
+services:
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: plataforma-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USERNAME}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+    ports:
+      - "127.0.0.1:15672:15672"
+
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      - plataforma-network
+
+
+  cursos-service:
+    image: pedrobreit/plataforma-cursos:${IMAGE_TAG:-latest}
+    container_name: plataforma-cursos-service
+    restart: unless-stopped
+
+    environment:
+      ORACLE_DB_USERNAME: ${ORACLE_DB_USERNAME}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD}
+      ORACLE_TNS_ADMIN: /app/wallet
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: us-east-1
+      AWS_DEFAULT_REGION: us-east-1
+
+      JAVA_TOOL_OPTIONS: >-
+        -Xms64m
+        -Xmx320m
+        -XX:+UseContainerSupport
+
+    volumes:
+      - /opt/plataforma-cursos/oracle/wallet:/app/wallet:ro
+
+    expose:
+      - "8081"
+
+    networks:
+      - plataforma-network
+
+
+  inscripciones-service:
+    image: pedrobreit/plataforma-inscripciones:${IMAGE_TAG:-latest}
+    container_name: plataforma-inscripciones-service
+    restart: unless-stopped
+
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+    environment:
+      ORACLE_DB_USERNAME: ${ORACLE_DB_USERNAME}
+      ORACLE_DB_PASSWORD: ${ORACLE_DB_PASSWORD}
+      ORACLE_TNS_ADMIN: /app/wallet
+
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+
+      JAVA_TOOL_OPTIONS: >-
+        -Xms64m
+        -Xmx384m
+        -XX:+UseContainerSupport
+
+    volumes:
+      - /opt/plataforma-cursos/oracle/wallet:/app/wallet:ro
+
+    expose:
+      - "8082"
+
+    networks:
+      - plataforma-network
+
+
+  bff-service:
+    image: pedrobreit/plataforma-bff:${IMAGE_TAG:-latest}
+    container_name: plataforma-bff-service
+    restart: unless-stopped
+
+    depends_on:
+      cursos-service:
+        condition: service_started
+      inscripciones-service:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+    environment:
+      SERVICES_CURSOS_URL: http://cursos-service:8081
+      SERVICES_INSCRIPCIONES_URL: http://inscripciones-service:8082
+
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+
+      SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI: ${JWT_JWK_SET_URI}
+
+      JAVA_TOOL_OPTIONS: >-
+        -Xms64m
+        -Xmx256m
+        -XX:+UseContainerSupport
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - plataforma-network
+
+
+networks:
+  plataforma-network:
+    name: plataforma-network
+    driver: bridge
+
+
+volumes:
+  rabbitmq_data:
+    name: plataforma-rabbitmq-data

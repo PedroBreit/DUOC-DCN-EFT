@@ -1,0 +1,539 @@
+name: CI/CD Plataforma de Cursos
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: plataforma-cursos-produccion
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+
+  # =========================================================
+  # 1. PRUEBAS AUTOMÁTICAS
+  # =========================================================
+  test:
+    name: Pruebas - ${{ matrix.service }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - bff-service
+          - cursos-service
+          - inscripciones-service
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: ${{ matrix.service }}/pom.xml
+
+      - name: Dar permisos al Maven Wrapper
+        working-directory: ${{ matrix.service }}
+        run: chmod +x mvnw
+
+      - name: Ejecutar pruebas Maven
+        working-directory: ${{ matrix.service }}
+        run: ./mvnw --batch-mode --no-transfer-progress clean test
+
+
+  # =========================================================
+  # 2. CONSTRUIR Y PUBLICAR IMÁGENES EN DOCKER HUB
+  # =========================================================
+  build-images:
+    name: Imagen - ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    needs: test
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: bff-service
+            image: plataforma-bff
+
+          - service: cursos-service
+            image: plataforma-cursos
+
+          - service: inscripciones-service
+            image: plataforma-inscripciones
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Iniciar sesión en Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Construir y publicar imagen
+        uses: docker/build-push-action@v7
+        with:
+          context: ./${{ matrix.service }}
+          file: ./${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
+          push: true
+
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ github.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest
+
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+          provenance: false
+
+
+  # =========================================================
+  # 3. DESPLEGAR EN AMAZON EC2
+  # =========================================================
+  deploy:
+    name: Desplegar en EC2
+    runs-on: ubuntu-latest
+    needs: build-images
+    timeout-minutes: 30
+
+    steps:
+      - name: Descargar repositorio
+        uses: actions/checkout@v6
+
+      - name: Configurar credenciales de AWS Academy
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Obtener IP pública del runner
+        id: runner-ip
+        run: |
+          set -Eeuo pipefail
+
+          RUNNER_IP="$(curl -fsS https://checkip.amazonaws.com | tr -d '[:space:]')"
+
+          if [ -z "$RUNNER_IP" ]; then
+            echo "No fue posible obtener la IP del runner."
+            exit 1
+          fi
+
+          echo "address=$RUNNER_IP" >> "$GITHUB_OUTPUT"
+          echo "IP temporal obtenida correctamente."
+
+      - name: Autorizar SSH temporal en el Security Group
+        env:
+          SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+          RUNNER_IP: ${{ steps.runner-ip.outputs.address }}
+        run: |
+          set -Eeuo pipefail
+
+          if ! RESULT=$(aws ec2 authorize-security-group-ingress \
+            --group-id "$SECURITY_GROUP_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "$RUNNER_IP/32" 2>&1); then
+
+            if [[ "$RESULT" != *"InvalidPermission.Duplicate"* ]]; then
+              echo "$RESULT"
+              exit 1
+            fi
+          fi
+
+          echo "Acceso SSH temporal autorizado."
+
+      - name: Preparar llave, wallet y variables
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+
+          ORACLE_WALLET_B64: ${{ secrets.ORACLE_WALLET_B64 }}
+          ORACLE_DB_USERNAME: ${{ secrets.ORACLE_DB_USERNAME }}
+          ORACLE_DB_PASSWORD: ${{ secrets.ORACLE_DB_PASSWORD }}
+
+          RABBITMQ_USERNAME: ${{ secrets.RABBITMQ_USERNAME }}
+          RABBITMQ_PASSWORD: ${{ secrets.RABBITMQ_PASSWORD }}
+
+          JWT_JWK_SET_URI: ${{ secrets.JWT_JWK_SET_URI }}
+
+          AWS_ACCESS_KEY_ID_VALUE: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY_VALUE: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_SESSION_TOKEN_VALUE: ${{ secrets.AWS_SESSION_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+
+          mkdir -p "$HOME/.ssh"
+          mkdir -p .deploy
+
+          printf '%s' "$EC2_SSH_KEY" |
+            tr -d '\r' > "$HOME/.ssh/id_rsa"
+
+          chmod 600 "$HOME/.ssh/id_rsa"
+
+          python3 <<'PYTHON'
+          import base64
+          import os
+          import zipfile
+          from pathlib import Path
+
+          deploy_dir = Path(".deploy")
+          deploy_dir.mkdir(exist_ok=True)
+
+          # -------------------------------------------------
+          # Reconstrucción y validación del Wallet
+          # -------------------------------------------------
+          encoded_wallet = "".join(
+              os.environ["ORACLE_WALLET_B64"].split()
+          )
+
+          wallet_bytes = base64.b64decode(
+              encoded_wallet,
+              validate=True
+          )
+
+          wallet_path = deploy_dir / "wallet.zip"
+          wallet_path.write_bytes(wallet_bytes)
+
+          with zipfile.ZipFile(wallet_path) as wallet_zip:
+              bad_file = wallet_zip.testzip()
+
+              if bad_file is not None:
+                  raise RuntimeError(
+                      f"El Wallet contiene un archivo dañado: {bad_file}"
+                  )
+
+              wallet_files = {
+                  Path(name).name
+                  for name in wallet_zip.namelist()
+              }
+
+              required_files = {
+                  "tnsnames.ora",
+                  "sqlnet.ora",
+                  "cwallet.sso",
+              }
+
+              missing_files = required_files - wallet_files
+
+              if missing_files:
+                  raise RuntimeError(
+                      "Faltan archivos en el Wallet: "
+                      + ", ".join(sorted(missing_files))
+                  )
+
+          # -------------------------------------------------
+          # Archivo privado utilizado por Docker Compose
+          # -------------------------------------------------
+          values = {
+              "IMAGE_TAG": os.environ["GITHUB_SHA"],
+
+              "ORACLE_DB_USERNAME":
+                  os.environ["ORACLE_DB_USERNAME"],
+
+              "ORACLE_DB_PASSWORD":
+                  os.environ["ORACLE_DB_PASSWORD"],
+
+              "RABBITMQ_USERNAME":
+                  os.environ["RABBITMQ_USERNAME"],
+
+              "RABBITMQ_PASSWORD":
+                  os.environ["RABBITMQ_PASSWORD"],
+
+              "JWT_JWK_SET_URI":
+                  os.environ["JWT_JWK_SET_URI"],
+
+              "AWS_ACCESS_KEY_ID":
+                  os.environ["AWS_ACCESS_KEY_ID_VALUE"],
+
+              "AWS_SECRET_ACCESS_KEY":
+                  os.environ["AWS_SECRET_ACCESS_KEY_VALUE"],
+
+              "AWS_SESSION_TOKEN":
+                  os.environ["AWS_SESSION_TOKEN_VALUE"],
+          }
+
+          def dotenv_quote(value: str) -> str:
+              escaped = (
+                  value
+                  .replace("\\", "\\\\")
+                  .replace("'", "\\'")
+              )
+
+              return f"'{escaped}'"
+
+          env_content = "\n".join(
+              f"{key}={dotenv_quote(value)}"
+              for key, value in values.items()
+          )
+
+          env_path = deploy_dir / "plataforma.env"
+          env_path.write_text(
+              env_content + "\n",
+              encoding="utf-8"
+          )
+          PYTHON
+
+          chmod 600 .deploy/plataforma.env
+
+          echo "Wallet y variables preparados correctamente."
+
+      - name: Registrar host SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+        run: |
+          set -Eeuo pipefail
+
+          for ATTEMPT in {1..12}; do
+            if ssh-keyscan \
+              -T 10 \
+              -H "$EC2_HOST" \
+              >> "$HOME/.ssh/known_hosts" 2>/dev/null; then
+
+              echo "Host SSH registrado."
+              exit 0
+            fi
+
+            echo "Esperando disponibilidad de SSH..."
+            sleep 5
+          done
+
+          echo "No fue posible conectar al puerto SSH."
+          exit 1
+
+      - name: Copiar archivos hacia EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          scp \
+            -i "$HOME/.ssh/id_rsa" \
+            -o BatchMode=yes \
+            docker-compose.prod.yml \
+            .deploy/plataforma.env \
+            .deploy/wallet.zip \
+            "$EC2_USER@$EC2_HOST:/tmp/"
+
+      - name: Instalar Docker y desplegar plataforma
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -Eeuo pipefail
+
+          ssh \
+            -i "$HOME/.ssh/id_rsa" \
+            -o BatchMode=yes \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -s' <<'REMOTE_SCRIPT'
+
+          set -Eeuo pipefail
+
+          DEPLOY_DIR="/opt/plataforma-cursos"
+          WALLET_DIR="$DEPLOY_DIR/oracle/wallet"
+          COMPOSE_FILE="$DEPLOY_DIR/docker-compose.prod.yml"
+          ENV_FILE="$DEPLOY_DIR/.env"
+
+          echo "Preparando Amazon EC2..."
+
+          # -------------------------------------------------
+          # Instalar dependencias del servidor
+          # -------------------------------------------------
+          sudo dnf install -y \
+            docker \
+            unzip \
+            curl
+
+          sudo systemctl enable --now docker
+
+          # -------------------------------------------------
+          # Instalar Docker Compose cuando no exista
+          # -------------------------------------------------
+          if ! sudo docker compose version >/dev/null 2>&1; then
+            MACHINE_ARCH="$(uname -m)"
+
+            case "$MACHINE_ARCH" in
+              x86_64)
+                COMPOSE_ARCH="x86_64"
+                ;;
+
+              aarch64|arm64)
+                COMPOSE_ARCH="aarch64"
+                ;;
+
+              *)
+                echo "Arquitectura no soportada: $MACHINE_ARCH"
+                exit 1
+                ;;
+            esac
+
+            sudo mkdir -p \
+              /usr/local/lib/docker/cli-plugins
+
+            sudo curl -fsSL \
+              "https://github.com/docker/compose/releases/download/v5.1.2/docker-compose-linux-${COMPOSE_ARCH}" \
+              -o /usr/local/lib/docker/cli-plugins/docker-compose
+
+            sudo chmod +x \
+              /usr/local/lib/docker/cli-plugins/docker-compose
+          fi
+
+          sudo docker compose version
+
+          # -------------------------------------------------
+          # Preparar carpetas privadas
+          # -------------------------------------------------
+          sudo mkdir -p "$WALLET_DIR"
+
+          sudo install \
+            -m 644 \
+            /tmp/docker-compose.prod.yml \
+            "$COMPOSE_FILE"
+
+          sudo install \
+            -m 600 \
+            /tmp/plataforma.env \
+            "$ENV_FILE"
+
+          # -------------------------------------------------
+          # Reconstruir Oracle Wallet
+          # -------------------------------------------------
+          sudo rm -rf "${WALLET_DIR:?}"/*
+
+          sudo unzip \
+            -oq \
+            /tmp/wallet.zip \
+            -d "$WALLET_DIR"
+
+          sudo find "$WALLET_DIR" \
+            -type d \
+            -exec chmod 755 {} \;
+
+          sudo find "$WALLET_DIR" \
+            -type f \
+            -exec chmod 644 {} \;
+
+          sudo test -f "$WALLET_DIR/tnsnames.ora"
+          sudo test -f "$WALLET_DIR/sqlnet.ora"
+          sudo test -f "$WALLET_DIR/cwallet.sso"
+
+          rm -f \
+            /tmp/docker-compose.prod.yml \
+            /tmp/plataforma.env \
+            /tmp/wallet.zip
+
+          # -------------------------------------------------
+          # Validar y desplegar contenedores
+          # -------------------------------------------------
+          cd "$DEPLOY_DIR"
+
+          sudo docker compose \
+            --env-file "$ENV_FILE" \
+            -f "$COMPOSE_FILE" \
+            config >/dev/null
+
+          sudo docker compose \
+            --env-file "$ENV_FILE" \
+            -f "$COMPOSE_FILE" \
+            pull
+
+          sudo docker compose \
+            --env-file "$ENV_FILE" \
+            -f "$COMPOSE_FILE" \
+            up -d \
+            --remove-orphans
+
+          # -------------------------------------------------
+          # Esperar el inicio del BFF
+          # -------------------------------------------------
+          DEPLOY_OK=false
+
+          for ATTEMPT in $(seq 1 36); do
+            if curl -fsS \
+              http://127.0.0.1:8080/actuator/health \
+              > /tmp/bff-health.json; then
+
+              DEPLOY_OK=true
+              break
+            fi
+
+            echo "Esperando inicio del BFF..."
+            sleep 5
+          done
+
+          if [ "$DEPLOY_OK" != "true" ]; then
+            echo "El BFF no respondió correctamente."
+
+            sudo docker compose \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              ps
+
+            sudo docker compose \
+              --env-file "$ENV_FILE" \
+              -f "$COMPOSE_FILE" \
+              logs \
+              --tail=120
+
+            exit 1
+          fi
+
+          echo "Respuesta del health check:"
+          cat /tmp/bff-health.json
+          echo
+
+          echo "Contenedores desplegados:"
+          sudo docker compose \
+            --env-file "$ENV_FILE" \
+            -f "$COMPOSE_FILE" \
+            ps
+
+          sudo docker image prune -f
+
+          echo "Despliegue completado correctamente."
+
+          REMOTE_SCRIPT
+
+      - name: Revocar acceso SSH temporal
+        if: always()
+        env:
+          SECURITY_GROUP_ID: ${{ secrets.EC2_SECURITY_GROUP_ID }}
+          RUNNER_IP: ${{ steps.runner-ip.outputs.address }}
+        run: |
+          if [ -n "${RUNNER_IP:-}" ]; then
+            aws ec2 revoke-security-group-ingress \
+              --group-id "$SECURITY_GROUP_ID" \
+              --protocol tcp \
+              --port 22 \
+              --cidr "$RUNNER_IP/32" || true
+          fi
+
+          echo "Regla SSH temporal eliminada."
+
+      - name: Limpiar archivos temporales
+        if: always()
+        run: |
+          rm -rf .deploy
+          rm -f "$HOME/.ssh/id_rsa"
