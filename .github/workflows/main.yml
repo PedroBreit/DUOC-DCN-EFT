@@ -472,17 +472,22 @@ jobs:
           # Esperar el inicio del BFF
           # -------------------------------------------------
           DEPLOY_OK=false
+          HTTP_STATUS=""
 
           for ATTEMPT in $(seq 1 36); do
-            if curl -fsS \
-              http://127.0.0.1:8080/actuator/health \
-              > /tmp/bff-health.json; then
+            HTTP_STATUS="$(curl \
+              -sS \
+              -o /dev/null \
+              -w '%{http_code}' \
+              http://127.0.0.1:8080/api/plataforma/cursos \
+              || true)"
 
+            if [ "$HTTP_STATUS" = "401" ]; then
               DEPLOY_OK=true
               break
             fi
 
-            echo "Esperando inicio del BFF..."
+            echo "Esperando inicio del BFF. HTTP: ${HTTP_STATUS:-sin respuesta}"
             sleep 5
           done
 
@@ -503,9 +508,7 @@ jobs:
             exit 1
           fi
 
-          echo "Respuesta del health check:"
-          cat /tmp/bff-health.json
-          echo
+          echo "BFF disponible y seguridad activa. HTTP: $HTTP_STATUS"
 
           echo "Contenedores desplegados:"
           sudo docker compose \

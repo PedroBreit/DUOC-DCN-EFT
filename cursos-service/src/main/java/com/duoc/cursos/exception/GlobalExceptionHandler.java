@@ -47,6 +47,27 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(respuesta);
     }
 
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>>
+    manejarArgumentoInvalido(
+            IllegalArgumentException ex
+    ) {
+        Map<String, Object> respuesta =
+                new LinkedHashMap<>();
+
+        respuesta.put("timestamp", LocalDateTime.now());
+        respuesta.put(
+                "status",
+                HttpStatus.BAD_REQUEST.value()
+        );
+        respuesta.put("error", "Solicitud inválida");
+        respuesta.put("mensaje", ex.getMessage());
+
+        return ResponseEntity
+                .badRequest()
+                .body(respuesta);
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> manejarErrorGeneral(Exception ex) {
         Map<String, Object> respuesta = new LinkedHashMap<>();

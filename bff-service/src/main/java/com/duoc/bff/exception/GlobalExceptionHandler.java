@@ -18,10 +18,23 @@ public class GlobalExceptionHandler {
             RestClientResponseException ex
     ) {
         Map<String, Object> respuesta = new LinkedHashMap<>();
-        respuesta.put("timestamp", LocalDateTime.now());
-        respuesta.put("status", ex.getStatusCode().value());
-        respuesta.put("error", "Error en servicio backend");
-        respuesta.put("mensaje", ex.getResponseBodyAsString());
+
+        respuesta.put(
+                "timestamp",
+                LocalDateTime.now()
+        );
+        respuesta.put(
+                "status",
+                ex.getStatusCode().value()
+        );
+        respuesta.put(
+                "error",
+                "Error en servicio backend"
+        );
+        respuesta.put(
+                "mensaje",
+                ex.getResponseBodyAsString()
+        );
 
         return ResponseEntity
                 .status(ex.getStatusCode())
@@ -29,27 +42,86 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(ServicioNoDisponibleException.class)
-    public ResponseEntity<Map<String, Object>> manejarServicioNoDisponible(
+    public ResponseEntity<Map<String, Object>>
+    manejarServicioNoDisponible(
             ServicioNoDisponibleException ex
     ) {
         Map<String, Object> respuesta = new LinkedHashMap<>();
-        respuesta.put("timestamp", LocalDateTime.now());
-        respuesta.put("status", HttpStatus.SERVICE_UNAVAILABLE.value());
-        respuesta.put("error", "Servicio no disponible");
-        respuesta.put("mensaje", ex.getMessage());
+
+        respuesta.put(
+                "timestamp",
+                LocalDateTime.now()
+        );
+        respuesta.put(
+                "status",
+                HttpStatus.SERVICE_UNAVAILABLE.value()
+        );
+        respuesta.put(
+                "error",
+                "Servicio no disponible"
+        );
+        respuesta.put(
+                "mensaje",
+                ex.getMessage()
+        );
 
         return ResponseEntity
                 .status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(respuesta);
     }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> manejarErrorGeneral(Exception ex) {
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, Object>>
+    manejarArgumentoInvalido(
+            IllegalArgumentException ex
+    ) {
         Map<String, Object> respuesta = new LinkedHashMap<>();
-        respuesta.put("timestamp", LocalDateTime.now());
-        respuesta.put("status", HttpStatus.INTERNAL_SERVER_ERROR.value());
-        respuesta.put("error", "Error interno");
-        respuesta.put("mensaje", ex.getMessage());
+
+        respuesta.put(
+                "timestamp",
+                LocalDateTime.now()
+        );
+        respuesta.put(
+                "status",
+                HttpStatus.BAD_REQUEST.value()
+        );
+        respuesta.put(
+                "error",
+                "Solicitud inválida"
+        );
+        respuesta.put(
+                "mensaje",
+                ex.getMessage()
+        );
+
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(respuesta);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, Object>>
+    manejarErrorGeneral(
+            Exception ex
+    ) {
+        Map<String, Object> respuesta = new LinkedHashMap<>();
+
+        respuesta.put(
+                "timestamp",
+                LocalDateTime.now()
+        );
+        respuesta.put(
+                "status",
+                HttpStatus.INTERNAL_SERVER_ERROR.value()
+        );
+        respuesta.put(
+                "error",
+                "Error interno"
+        );
+        respuesta.put(
+                "mensaje",
+                ex.getMessage()
+        );
 
         return ResponseEntity
                 .status(HttpStatus.INTERNAL_SERVER_ERROR)

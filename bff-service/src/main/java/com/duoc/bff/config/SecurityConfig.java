@@ -14,8 +14,9 @@ import org.springframework.security.web.SecurityFilterChain;
 public class SecurityConfig {
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http)
-            throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
 
         http
                 .csrf(csrf -> csrf.disable())
@@ -28,11 +29,9 @@ public class SecurityConfig {
 
                 .authorizeHttpRequests(auth -> auth
 
-                        // Endpoints públicos
-                        .requestMatchers(
-                                "/actuator/health",
-                                "/actuator/info"
-                        ).permitAll()
+                        // =================================================
+                        // ARCHIVOS
+                        // =================================================
 
                         // Solo INSTRUCTOR puede subir materiales
                         .requestMatchers(
@@ -40,7 +39,19 @@ public class SecurityConfig {
                                 "/api/plataforma/cursos/*/archivos"
                         ).hasRole("INSTRUCTOR")
 
-                        // ESTUDIANTE e INSTRUCTOR pueden descargar materiales
+                        // Solo INSTRUCTOR puede reemplazar materiales
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/plataforma/cursos/*/archivos"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede eliminar materiales
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/plataforma/cursos/*/archivos"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Ambos roles pueden descargar materiales
                         .requestMatchers(
                                 HttpMethod.GET,
                                 "/api/plataforma/archivos"
@@ -49,15 +60,118 @@ public class SecurityConfig {
                                 "INSTRUCTOR"
                         )
 
-                        // Consulta de cursos
+                        // =================================================
+                        // CURSOS
+                        // =================================================
+
+                        // Solo INSTRUCTOR puede crear cursos
                         .requestMatchers(
-                                "/api/plataforma/cursos/**"
+                                HttpMethod.POST,
+                                "/api/plataforma/cursos"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede editar cursos
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/plataforma/cursos/*"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede eliminar cursos
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/plataforma/cursos/*"
+                        ).hasRole("INSTRUCTOR")
+
+                        // =================================================
+                        // EXÁMENES
+                        // =================================================
+
+                        // Solo INSTRUCTOR puede crear exámenes
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/plataforma/cursos/*/examenes"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede editar exámenes
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/plataforma/examenes/*"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede eliminar exámenes
+                        .requestMatchers(
+                                HttpMethod.DELETE,
+                                "/api/plataforma/examenes/*"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo ESTUDIANTE puede responder exámenes
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/plataforma/examenes/*/respuestas"
+                        ).hasRole("ESTUDIANTE")
+
+                        // Ambos roles pueden consultar un examen
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/plataforma/examenes/*"
                         ).hasAnyRole(
                                 "ESTUDIANTE",
                                 "INSTRUCTOR"
                         )
 
-                        // Inscripciones
+                        // =================================================
+                        // CALIFICACIONES
+                        // =================================================
+
+                        // Solo INSTRUCTOR puede listar calificaciones
+                        // de un curso
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/plataforma/cursos/*/calificaciones"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo INSTRUCTOR puede modificar puntajes
+                        .requestMatchers(
+                                HttpMethod.PUT,
+                                "/api/plataforma/calificaciones/*"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo ESTUDIANTE puede consultar sus resultados
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/plataforma/calificaciones/"
+                                        + "estudiantes/*"
+                        ).hasRole("ESTUDIANTE")
+
+                        // =================================================
+                        // CONSULTAS DE CURSOS
+                        // =================================================
+
+                        // Ambos roles pueden listar y consultar cursos,
+                        // materiales y exámenes
+                        .requestMatchers(
+                                HttpMethod.GET,
+                                "/api/plataforma/cursos",
+                                "/api/plataforma/cursos/*",
+                                "/api/plataforma/cursos/*/archivos",
+                                "/api/plataforma/cursos/*/examenes"
+                        ).hasAnyRole(
+                                "ESTUDIANTE",
+                                "INSTRUCTOR"
+                        )
+
+                        // =================================================
+                        // INSCRIPCIONES Y RABBITMQ
+                        // =================================================
+
+                        // Solo INSTRUCTOR consume mensajes de la cola de errores
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/api/plataforma/inscripciones/"
+                                        + "mensajes/errores/consumir"
+                        ).hasRole("INSTRUCTOR")
+
+                        // Solo ESTUDIANTE gestiona inscripciones
                         .requestMatchers(
                                 "/api/plataforma/inscripciones/**"
                         ).hasRole("ESTUDIANTE")
@@ -78,7 +192,9 @@ public class SecurityConfig {
     }
 
     @Bean
-    public JwtAuthenticationConverter jwtAuthenticationConverter() {
+    public JwtAuthenticationConverter
+    jwtAuthenticationConverter() {
+
         JwtAuthenticationConverter converter =
                 new JwtAuthenticationConverter();
 
