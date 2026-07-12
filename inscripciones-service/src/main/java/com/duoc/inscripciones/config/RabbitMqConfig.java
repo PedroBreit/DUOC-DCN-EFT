@@ -69,6 +69,8 @@ public class RabbitMqConfig {
 
     @Bean
     public MessageConverter messageConverter() {
-        return new Jackson2JsonMessageConverter();
+        return new Jackson2JsonMessageConverter(
+                "com.duoc.inscripciones.dto"
+        );
     }
 }
