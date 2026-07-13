@@ -192,7 +192,6 @@ DUOC-DCN-EFT/
 │   ├── 02_insertar_datos.sql
 │   └── 03_crear_examenes_calificaciones.sql
 ├── documentacion/
-├── frontend/
 ├── oracle/
 ├── rabbitmq/
 ├── docker-compose.prod.yml
